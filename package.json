@@ -12,13 +12,14 @@
     "type": "module",
     "dependencies": {
         "@discordjs/voice": "^0.16.1",
+        "@ybd-project/ytdl-core": "^5.0.6",
         "discord.js": "^14.14.1",
         "dotenv": "^16.3.1",
+        "node-fetch": "^3.3.2",
         "sodium-native": "^4.0.4",
         "typescript": "^5.3.3",
         "usetube": "^2.2.7",
-        "youtube-sr": "^4.3.10",
-        "ytdl-core": "^4.11.5"
+        "youtube-sr": "^4.3.11"
     },
     "devDependencies": {
         "@tsconfig/node20": "^20.1.2"
