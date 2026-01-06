@@ -10,10 +10,24 @@ import {
     joinVoiceChannel,
 } from '@discordjs/voice'
 import { createDiscordJSAdapter } from './adapter.js'
-import { createRequire } from 'module'
-const require = createRequire(import.meta.url)
-const YouTube = require('youtube-sr').default
-const ytdl = require('ytdl-core')
+import { Innertube, Platform, Types, YTNodes } from 'youtubei.js'
+
+// Youtube.js interpreter
+Platform.shim.eval = async (data: Types.BuildScriptResult, env: Record<string, Types.VMPrimative>) => {
+    const properties = []
+
+    if (env.n) {
+        properties.push(`n: exportedVars.nFunction("${env.n}")`)
+    }
+
+    if (env.sig) {
+        properties.push(`sig: exportedVars.sigFunction("${env.sig}")`)
+    }
+
+    const code = `${data.output}\nreturn { ${properties.join(', ')} }`
+
+    return new Function(code)()
+}
 
 const queues: { [key: string]: string[] } = { a: [] }
 
@@ -51,17 +65,19 @@ const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildVoiceStates],
 })
 
+const yt = await Innertube.create({ generate_session_locally: true, po_token: '' })
+
 const player = createAudioPlayer()
 
 player.on(AudioPlayerStatus.Idle, (e: any) => {
     const guildId = e.resource.metadata.guildId
     if (queues.hasOwnProperty(guildId) && queues[guildId].length > 0) {
-        const url = queues[guildId].shift()!
-        playSong(url, guildId)
+        const id = queues[guildId].shift()!
+        playSong(id, guildId)
     }
 })
 
-client.on('ready', () => {
+client.on('clientReady', () => {
     console.log(`Logged in as ${client.user!.tag}!`)
 })
 
@@ -76,8 +92,20 @@ client.on('interactionCreate', async (interaction) => {
 
                 connection.subscribe(player)
 
-                const result = await YouTube.searchOne(interaction.options.get('canción')?.value)
-                await interaction.reply(`Se agregó **${result.title}** de **${result.channel.name}** a la cola`)
+                const songName = interaction.options.get('canción')?.value as string
+                const search = await yt.music.search(songName, { type: 'song' })
+                if (
+                    !search.contents ||
+                    search.contents.length === 0 ||
+                    !search.contents[0].contents ||
+                    search.contents[0].contents.length === 0
+                ) {
+                    await interaction.reply(`No se encontraron resultados para **${songName}**`)
+                    return
+                }
+
+                const result = search.contents[0].contents[0] as YTNodes.MusicResponsiveListItem
+                await interaction.reply(`Se agregó **${result.title}** de **${result.artists![0].name}** a la cola`)
 
                 //queue
                 const guildID = interaction.guildId!
@@ -87,9 +115,9 @@ client.on('interactionCreate', async (interaction) => {
                 ) {
                     //empty queue, just play it
                     queues[guildID] = []
-                    playSong(result.url, guildID)
+                    playSong(result.id as string, guildID)
                 } else {
-                    queues[guildID].push(result.url)
+                    queues[guildID].push(result.id as string)
                 }
             } catch (error) {
                 console.error(error)
@@ -99,8 +127,8 @@ client.on('interactionCreate', async (interaction) => {
         }
     } else if (interaction.commandName === 'skip') {
         if (queues.hasOwnProperty(interaction.guildId!) && queues[interaction.guildId!].length > 0) {
-            const url = queues[interaction.guildId!].shift()!
-            playSong(url, interaction.guildId!)
+            const id = queues[interaction.guildId!].shift()!
+            playSong(id, interaction.guildId!)
         } else {
             player.stop()
         }
@@ -108,20 +136,20 @@ client.on('interactionCreate', async (interaction) => {
     }
 })
 
-function playSong(url: string, guildId: string) {
-    const resource = createAudioResource(
-        ytdl(url, {
-            filter: 'audioonly',
-            quality: 'highestaudio',
-            highWaterMark: 1 << 25,
-        }),
-        {
-            metadata: {
-                guildId: guildId,
-            },
-            inputType: StreamType.Arbitrary,
-        }
-    )
+async function playSong(id: string, guildId: string) {
+    const stream = await yt.download(id, {
+        type: 'video+audio',
+        quality: 'best',
+        format: 'mp4',
+        client: 'ANDROID',
+    })
+
+    const resource = createAudioResource(stream, {
+        metadata: {
+            guildId: guildId,
+        },
+        inputType: StreamType.Arbitrary,
+    })
 
     player.play(resource)
     return entersState(player, AudioPlayerStatus.Playing, 5000)
